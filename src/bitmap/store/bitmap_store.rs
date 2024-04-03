@@ -12,8 +12,8 @@ pub const BITMAP_LENGTH: usize = 1024;
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct BitmapStore {
-    len: u64,
-    bits: Box<[u64; BITMAP_LENGTH]>,
+    pub len: u64,
+    pub bits: Box<[u64; BITMAP_LENGTH]>,
 }
 
 impl BitmapStore {

@@ -16,7 +16,7 @@ use super::bitmap_store::{bit, key, BitmapStore, BITMAP_LENGTH};
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct ArrayStore {
-    vec: Vec<u16>,
+    pub vec: Vec<u16>,
 }
 
 impl ArrayStore {

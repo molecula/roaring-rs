@@ -5,7 +5,8 @@ use core::ops::{
 
 use alloc::vec::Vec;
 
-use super::store::{self, Store};
+pub use super::store::Store;
+use super::store::{self};
 use super::util;
 
 pub const ARRAY_LIMIT: u64 = 4096;

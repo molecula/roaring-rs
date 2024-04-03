@@ -1,9 +1,9 @@
 mod arbitrary;
-mod container;
+pub mod container;
 mod fmt;
 mod multiops;
 mod proptests;
-mod store;
+pub mod store;
 mod util;
 
 // Order of these modules matters as it determines the `impl` blocks order in
@@ -41,5 +41,5 @@ pub use self::iter::Iter;
 /// ```
 #[derive(PartialEq)]
 pub struct RoaringBitmap {
-    containers: Vec<container::Container>,
+    pub containers: Vec<container::Container>,
 }
