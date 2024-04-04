@@ -415,6 +415,8 @@ fn merge_container_ref<'a>(
                         // If it was borrowed it will clone-on-write
                         op(&mut lhs.to_mut().store, &rhs.store);
                     }
+                    (Store::Run(vec), _) => panic!("run not implemented"),
+                    (_, Store::Run(vec)) => panic!("run not implemented"),
                 };
             }
         }

@@ -40,6 +40,7 @@ impl RoaringBitmap {
             .map(|container| match container.store {
                 Store::Array(ref values) => 8 + values.len() as usize * 2,
                 Store::Bitmap(..) => 8 + 8 * 1024,
+                Store::Run(ref vec) => panic!("run not implemented"),
             })
             .sum();
 
@@ -83,6 +84,7 @@ impl RoaringBitmap {
                 Store::Bitmap(..) => {
                     offset += 8 * 1024;
                 }
+                Store::Run(ref vec) => panic!("run not implemented"),
             }
         }
 
@@ -98,6 +100,7 @@ impl RoaringBitmap {
                         writer.write_u64::<LittleEndian>(value)?;
                     }
                 }
+                Store::Run(ref vec) => panic!("run not implemented"),
             }
         }
 

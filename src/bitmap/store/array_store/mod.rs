@@ -13,6 +13,7 @@ use core::fmt::{Display, Formatter};
 use core::ops::{BitAnd, BitAndAssign, BitOr, BitXor, RangeInclusive, Sub, SubAssign};
 
 use super::bitmap_store::{bit, key, BitmapStore, BITMAP_LENGTH};
+use super::run_store::{Interval, RunStore};
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct ArrayStore {
@@ -192,6 +193,33 @@ impl ArrayStore {
             bits[key(index)] |= 1 << bit(index);
         }
         BitmapStore::from_unchecked(len, bits)
+    }
+
+    pub fn to_run_store(&self) -> RunStore {
+        let mut intervals = Vec::new();
+        let mut start = *self.vec.first().unwrap();
+        for (idx, &v) in self.vec[1..].iter().enumerate() {
+            if v - self.vec[idx] > 1 {
+                intervals.push(Interval::new(start, self.vec[idx]));
+                start = v
+            }
+        }
+        intervals.push(Interval::new(start, *self.vec.last().unwrap()));
+        RunStore { vec: intervals }
+    }
+
+    pub fn count_runs(&self) -> u64 {
+        self.vec
+            .iter()
+            .fold((-2, 0u64), |(prev, runs), &v| {
+                let new = v as i32;
+                if prev + 1 != new {
+                    (new, runs + 1)
+                } else {
+                    (new, runs)
+                }
+            })
+            .1
     }
 
     pub fn len(&self) -> u64 {
@@ -418,6 +446,7 @@ mod tests {
         match s {
             Store::Array(vec) => vec.vec,
             Store::Bitmap(bits) => bits.to_array_store().vec,
+            Store::Run(vec) => panic!("run not implemented"),
         }
     }
 
@@ -425,6 +454,7 @@ mod tests {
         match s {
             Store::Array(vec) => Store::Bitmap(vec.to_bitmap_store()),
             Store::Bitmap(..) => s,
+            Store::Run(vec) => panic!("run not implemented"),
         }
     }
 

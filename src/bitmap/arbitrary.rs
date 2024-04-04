@@ -157,6 +157,7 @@ mod test {
             match self {
                 Store::Array(a) => write!(f, "Store({:?})", a),
                 Store::Bitmap(b) => write!(f, "Store({:?})", b),
+                Store::Run(r) => write!(f, "Store({:?})", r),
             }
         }
     }

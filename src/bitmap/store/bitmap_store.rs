@@ -6,6 +6,7 @@ use core::ops::{BitAndAssign, BitOrAssign, BitXorAssign, RangeInclusive, SubAssi
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use super::run_store::{Interval, RunStore};
 use super::ArrayStore;
 
 pub const BITMAP_LENGTH: usize = 1024;
@@ -233,6 +234,66 @@ impl BitmapStore {
             }
         }
         ArrayStore::from_vec_unchecked(vec)
+    }
+
+    pub fn to_run_store(&self) -> RunStore {
+        let mut current = self.bits[0];
+        let mut i = 0u16;
+        let mut start;
+        let mut last;
+
+        let mut intervals = Vec::new();
+
+        loop {
+            // Skip over empty words
+            while current == 0 && i < BITMAP_LENGTH as u16 - 1 {
+                i += 1;
+                current = self.bits[i as usize];
+            }
+            // Reached end of the bitmap without finding anymore bits set
+            if current == 0 {
+                break;
+            }
+            let current_start = current.trailing_zeros() as u16;
+            start = 64 * i + current_start;
+
+            // Pad LSBs with 1s
+            current |= current - 1;
+
+            // Find next 0
+            while current == std::u64::MAX && i < BITMAP_LENGTH as u16 - 1 {
+                i += 1;
+                current = self.bits[i as usize];
+            }
+
+            // Run continues until end of this container
+            if current == std::u64::MAX {
+                intervals.push(Interval::new(start, std::u16::MAX));
+                break;
+            }
+
+            let current_last = (!current).trailing_zeros() as u16;
+            last = 64 * i + current_last;
+            intervals.push(Interval::new(start, last - 1));
+
+            // pad LSBs with 0s
+            current &= current + 1;
+        }
+        RunStore { vec: intervals }
+    }
+
+    pub fn count_runs(&self) -> u64 {
+        let mut num_runs = 0u64;
+
+        for i in 0..BITMAP_LENGTH - 1 {
+            let word = self.bits[i];
+            let next_word = self.bits[i + 1];
+            num_runs += ((word << 1) & !word).count_ones() as u64 + ((word >> 63) & !next_word);
+        }
+
+        let last = self.bits[BITMAP_LENGTH - 1];
+        num_runs += ((last << 1) & !last).count_ones() as u64 + (last >> 63);
+        num_runs
     }
 
     pub fn len(&self) -> u64 {
@@ -497,6 +558,13 @@ impl BitOrAssign<&ArrayStore> for BitmapStore {
             self.len += (old_w ^ new_w) >> bit;
             self.bits[key] = new_w;
         }
+    }
+}
+
+impl BitOrAssign<&RunStore> for BitmapStore {
+    fn bitor_assign(&mut self, rhs: &RunStore) {
+        let other = rhs.to_bitmap_store();
+        op_bitmaps(self, &other, BitOrAssign::bitor_assign);
     }
 }
 

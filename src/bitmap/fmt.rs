@@ -11,10 +11,11 @@ impl fmt::Debug for RoaringBitmap {
         } else {
             write!(
                 f,
-                "RoaringBitmap<{:?} values between {:?} and {:?}>",
+                "RoaringBitmap<{:?} values between {:?} and {:?} in {:?} containers>",
                 self.len(),
                 self.min().unwrap(),
-                self.max().unwrap()
+                self.max().unwrap(),
+                self.containers.len()
             )
         }
     }

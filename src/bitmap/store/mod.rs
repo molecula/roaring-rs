@@ -1,5 +1,6 @@
 mod array_store;
 mod bitmap_store;
+mod run_store;
 
 use alloc::{boxed::Box, vec};
 use core::mem;
@@ -9,10 +10,11 @@ use core::ops::{
 use core::slice;
 
 pub use self::bitmap_store::BITMAP_LENGTH;
-use self::Store::{Array, Bitmap};
+use self::Store::{Array, Bitmap, Run};
 
 pub use self::array_store::ArrayStore;
 pub use self::bitmap_store::{BitmapIter, BitmapStore};
+pub use self::run_store::{Interval, RunIter, RunStore};
 
 use crate::bitmap::container::ARRAY_LIMIT;
 
@@ -20,6 +22,7 @@ use crate::bitmap::container::ARRAY_LIMIT;
 pub enum Store {
     Array(ArrayStore),
     Bitmap(BitmapStore),
+    Run(RunStore),
 }
 
 pub enum Iter<'a> {
@@ -27,6 +30,7 @@ pub enum Iter<'a> {
     Vec(vec::IntoIter<u16>),
     BitmapBorrowed(BitmapIter<&'a [u64; BITMAP_LENGTH]>),
     BitmapOwned(BitmapIter<Box<[u64; BITMAP_LENGTH]>>),
+    Run(RunIter),
 }
 
 impl Store {
@@ -50,6 +54,7 @@ impl Store {
         match self {
             Array(vec) => vec.insert(index),
             Bitmap(bits) => bits.insert(index),
+            Run(vec) => vec.insert(index),
         }
     }
 
@@ -62,6 +67,7 @@ impl Store {
         match self {
             Array(vec) => vec.insert_range(range),
             Bitmap(bits) => bits.insert_range(range),
+            Run(vec) => panic!("run not implemented"),
         }
     }
 
@@ -72,6 +78,7 @@ impl Store {
         match self {
             Array(vec) => vec.push(index),
             Bitmap(bits) => bits.push(index),
+            Run(vec) => panic!("run not implemented"),
         }
     }
 
@@ -86,6 +93,7 @@ impl Store {
         match self {
             Array(vec) => vec.push_unchecked(index),
             Bitmap(bits) => bits.push_unchecked(index),
+            Run(vec) => panic!("run not implemented"),
         }
     }
 
@@ -93,6 +101,7 @@ impl Store {
         match self {
             Array(vec) => vec.remove(index),
             Bitmap(bits) => bits.remove(index),
+            Run(vec) => vec.remove(index),
         }
     }
 
@@ -104,6 +113,7 @@ impl Store {
         match self {
             Array(vec) => vec.remove_range(range),
             Bitmap(bits) => bits.remove_range(range),
+            Run(vec) => vec.remove_range(range),
         }
     }
 
@@ -111,6 +121,7 @@ impl Store {
         match self {
             Array(vec) => vec.remove_smallest(index),
             Bitmap(bits) => bits.remove_smallest(index),
+            Run(vec) => panic!("run not implemented"),
         }
     }
 
@@ -118,6 +129,7 @@ impl Store {
         match self {
             Array(vec) => vec.remove_biggest(index),
             Bitmap(bits) => bits.remove_biggest(index),
+            Run(vec) => panic!("run not implemented"),
         }
     }
 
@@ -125,6 +137,7 @@ impl Store {
         match self {
             Array(vec) => vec.contains(index),
             Bitmap(bits) => bits.contains(index),
+            Run(vec) => vec.contains(index),
         }
     }
 
@@ -132,6 +145,7 @@ impl Store {
         match self {
             Array(vec) => vec.contains_range(range),
             Bitmap(bits) => bits.contains_range(range),
+            Run(vec) => panic!("run not implemented"),
         }
     }
 
@@ -146,15 +160,24 @@ impl Store {
             (Array(vec), Bitmap(bits)) | (Bitmap(bits), Array(vec)) => {
                 vec.iter().all(|&i| !bits.contains(i))
             }
+            (Run(vec), _) => panic!("run not implemented"),
+            (_, Run(vec)) => panic!("run not implemented"),
         }
     }
 
     pub fn is_subset(&self, other: &Self) -> bool {
         match (self, other) {
             (Array(vec1), Array(vec2)) => vec1.is_subset(vec2),
-            (Bitmap(bits1), Bitmap(bits2)) => bits1.is_subset(bits2),
             (Array(vec), Bitmap(bits)) => vec.iter().all(|&i| bits.contains(i)),
+            (Array(vec), Run(intervals)) => vec.iter().all(|&i| intervals.contains(i)),
+
             (Bitmap(..), &Array(..)) => false,
+            (Bitmap(bits1), Bitmap(bits2)) => bits1.is_subset(bits2),
+            (Bitmap(..), Run(vec)) => panic!("run not implemented"),
+
+            (Run(vec), Array(..)) => panic!("run not implemented"),
+            (Run(vec), Bitmap(..)) => panic!("run not implemented"),
+            (Run(vec1), Run(vec2)) => panic!("run not implemented"),
         }
     }
 
@@ -164,6 +187,8 @@ impl Store {
             (Bitmap(bits1), Bitmap(bits2)) => bits1.intersection_len_bitmap(bits2),
             (Array(vec), Bitmap(bits)) => bits.intersection_len_array(vec),
             (Bitmap(bits), Array(vec)) => bits.intersection_len_array(vec),
+            (Run(vec), _) => panic!("run not implemented"),
+            (_, Run(vec)) => panic!("run not implemented"),
         }
     }
 
@@ -171,6 +196,7 @@ impl Store {
         match self {
             Array(vec) => vec.len(),
             Bitmap(bits) => bits.len(),
+            Run(intervals) => intervals.len(),
         }
     }
 
@@ -178,6 +204,7 @@ impl Store {
         match self {
             Array(vec) => vec.min(),
             Bitmap(bits) => bits.min(),
+            Run(intervals) => intervals.min(),
         }
     }
 
@@ -185,6 +212,7 @@ impl Store {
         match self {
             Array(vec) => vec.max(),
             Bitmap(bits) => bits.max(),
+            Run(intervals) => intervals.max(),
         }
     }
 
@@ -192,6 +220,7 @@ impl Store {
         match self {
             Array(vec) => vec.rank(index),
             Bitmap(bits) => bits.rank(index),
+            Run(vec) => panic!("run not implemented"),
         }
     }
 
@@ -199,6 +228,7 @@ impl Store {
         match self {
             Array(vec) => vec.select(n),
             Bitmap(bits) => bits.select(n),
+            Run(vec) => panic!("run not implemented"),
         }
     }
 
@@ -206,6 +236,23 @@ impl Store {
         match self {
             Array(arr) => Bitmap(arr.to_bitmap_store()),
             Bitmap(_) => self.clone(),
+            Run(vec) => Bitmap(vec.to_bitmap_store()),
+        }
+    }
+
+    pub(crate) fn to_run(&self) -> Store {
+        match self {
+            Array(arr) => Run(arr.to_run_store()),
+            Bitmap(bits) => Run(bits.to_run_store()),
+            Run(vec) => self.clone(),
+        }
+    }
+
+    pub fn count_runs(&self) -> u64 {
+        match self {
+            Array(vec) => vec.count_runs(),
+            Bitmap(bits) => bits.count_runs(),
+            Run(intervals) => intervals.count_runs(),
         }
     }
 }
@@ -237,6 +284,8 @@ impl BitOr<&Store> for &Store {
                 BitOrAssign::bitor_assign(&mut rhs, self);
                 rhs
             }
+            (Run(vec), _) => panic!("run not implemented"),
+            (_, Run(vec)) => panic!("run not implemented"),
         }
     }
 }
@@ -244,18 +293,40 @@ impl BitOr<&Store> for &Store {
 impl BitOrAssign<Store> for Store {
     fn bitor_assign(&mut self, mut rhs: Store) {
         match (self, &mut rhs) {
+            // (Array, _)
             (&mut Array(ref mut vec1), &mut Array(ref vec2)) => {
                 *vec1 = BitOr::bitor(&*vec1, vec2);
             }
+            (this @ &mut Array(..), &mut Bitmap(..)) => {
+                mem::swap(this, &mut rhs);
+                BitOrAssign::bitor_assign(this, rhs);
+            }
+            (this @ &mut Array(..), &mut Run(..)) => {
+                mem::swap(this, &mut rhs);
+                BitOrAssign::bitor_assign(this, rhs);
+            }
+
+            // (Bitmap, _)
             (&mut Bitmap(ref mut bits1), &mut Array(ref vec2)) => {
                 BitOrAssign::bitor_assign(bits1, vec2);
             }
             (&mut Bitmap(ref mut bits1), &mut Bitmap(ref bits2)) => {
                 BitOrAssign::bitor_assign(bits1, bits2);
             }
-            (this @ &mut Array(..), &mut Bitmap(..)) => {
+            (&mut Bitmap(ref mut bits1), &mut Run(ref vec)) => {
+                BitOrAssign::bitor_assign(bits1, vec);
+            }
+
+            // (Run, _)
+            (&mut Run(ref mut vec), &mut Array(ref vec2)) => {
+                BitOrAssign::bitor_assign(vec, vec2);
+            }
+            (this @ &mut Run(..), &mut Bitmap(..)) => {
                 mem::swap(this, &mut rhs);
                 BitOrAssign::bitor_assign(this, rhs);
+            }
+            (&mut Run(ref mut vec1), &mut Run(ref vec2)) => {
+                BitOrAssign::bitor_assign(vec1, vec2);
             }
         }
     }
@@ -264,20 +335,40 @@ impl BitOrAssign<Store> for Store {
 impl BitOrAssign<&Store> for Store {
     fn bitor_assign(&mut self, rhs: &Store) {
         match (self, rhs) {
+            // (Array, _)
             (&mut Array(ref mut vec1), Array(vec2)) => {
                 let this = mem::take(vec1);
                 *vec1 = BitOr::bitor(&this, vec2);
             }
+            (this @ &mut Array(..), Bitmap(bits2)) => {
+                let mut lhs: Store = Bitmap(bits2.clone());
+                BitOrAssign::bitor_assign(&mut lhs, &*this);
+                *this = lhs;
+            }
+            (this @ &mut Array(..), Run(vec2)) => {
+                let mut lhs: Store = Run(vec2.clone());
+                BitOrAssign::bitor_assign(&mut lhs, &*this);
+                *this = lhs;
+            }
+
+            // (Bitmap, _)
             (&mut Bitmap(ref mut bits1), Array(vec2)) => {
                 BitOrAssign::bitor_assign(bits1, vec2);
             }
             (&mut Bitmap(ref mut bits1), Bitmap(bits2)) => {
                 BitOrAssign::bitor_assign(bits1, bits2);
             }
-            (this @ &mut Array(..), Bitmap(bits2)) => {
+            (&mut Bitmap(ref mut bits1), Run(vec)) => BitOrAssign::bitor_assign(bits1, vec),
+
+            // (Run, _)
+            (&mut Run(ref mut vec), Array(vec2)) => BitOrAssign::bitor_assign(vec, vec2),
+            (this @ &mut Run(..), Bitmap(bits2)) => {
                 let mut lhs: Store = Bitmap(bits2.clone());
                 BitOrAssign::bitor_assign(&mut lhs, &*this);
                 *this = lhs;
+            }
+            (&mut Run(ref mut vec1), Run(vec2)) => {
+                BitOrAssign::bitor_assign(vec1, vec2);
             }
         }
     }
@@ -323,6 +414,8 @@ impl BitAndAssign<Store> for Store {
                 mem::swap(this, &mut rhs);
                 BitAndAssign::bitand_assign(this, rhs);
             }
+            (Run(vec), _) => panic!("run not implemented"),
+            (_, Run(vec)) => panic!("run not implemented"),
         }
     }
 }
@@ -352,6 +445,8 @@ impl BitAndAssign<&Store> for Store {
                 BitAndAssign::bitand_assign(&mut new, &*this);
                 *this = new;
             }
+            (Run(vec), _) => panic!("run not implemented"),
+            (_, Run(vec)) => panic!("run not implemented"),
         }
     }
 }
@@ -386,6 +481,8 @@ impl SubAssign<&Store> for Store {
             (&mut Array(ref mut vec1), Bitmap(bits2)) => {
                 SubAssign::sub_assign(vec1, bits2);
             }
+            (Run(vec), _) => panic!("run not implemented"),
+            (_, Run(vec)) => panic!("run not implemented"),
         }
     }
 }
@@ -426,6 +523,8 @@ impl BitXorAssign<Store> for Store {
                 mem::swap(this, &mut rhs);
                 BitXorAssign::bitxor_assign(this, rhs);
             }
+            (Run(vec), _) => panic!("run not implemented"),
+            (_, Run(vec)) => panic!("run not implemented"),
         }
     }
 }
@@ -448,6 +547,8 @@ impl BitXorAssign<&Store> for Store {
                 BitXorAssign::bitxor_assign(&mut lhs, &*this);
                 *this = lhs;
             }
+            (Run(vec), _) => panic!("run not implemented"),
+            (_, Run(vec)) => panic!("run not implemented"),
         }
     }
 }
@@ -459,6 +560,7 @@ impl<'a> IntoIterator for &'a Store {
         match self {
             Array(vec) => Iter::Array(vec.iter()),
             Bitmap(bits) => Iter::BitmapBorrowed(bits.iter()),
+            Run(intervals) => Iter::Run(intervals.iter()),
         }
     }
 }
@@ -470,6 +572,7 @@ impl IntoIterator for Store {
         match self {
             Array(vec) => Iter::Vec(vec.into_iter()),
             Bitmap(bits) => Iter::BitmapOwned(bits.into_iter()),
+            Run(intervals) => Iter::Run(intervals.iter()),
         }
     }
 }
@@ -482,6 +585,7 @@ impl PartialEq for Store {
                 bits1.len() == bits2.len()
                     && bits1.iter().zip(bits2.iter()).all(|(i1, i2)| i1 == i2)
             }
+            (&Run(ref intervals1), &Run(ref intervals2)) => intervals1 == intervals2,
             _ => false,
         }
     }
@@ -496,6 +600,7 @@ impl<'a> Iterator for Iter<'a> {
             Iter::Vec(inner) => inner.next(),
             Iter::BitmapBorrowed(inner) => inner.next(),
             Iter::BitmapOwned(inner) => inner.next(),
+            Iter::Run(inner) => inner.next(),
         }
     }
 }
@@ -507,6 +612,7 @@ impl DoubleEndedIterator for Iter<'_> {
             Iter::Vec(inner) => inner.next_back(),
             Iter::BitmapBorrowed(inner) => inner.next_back(),
             Iter::BitmapOwned(inner) => inner.next_back(),
+            Iter::Run(inner) => panic!("run not implemented"),
         }
     }
 }

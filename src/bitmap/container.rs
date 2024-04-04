@@ -9,7 +9,15 @@ pub use super::store::Store;
 use super::store::{self};
 use super::util;
 
-pub const ARRAY_LIMIT: u64 = 4096;
+// ARRAY_LIMIT is the maximum number of array elements in an array container.
+// Normally, its value would be 4096, but since our page size is 8152 bytes, we
+// set it to a lower value to avoid overflowing a single page.
+pub const ARRAY_LIMIT: u64 = 4076;
+
+// RUN_MAX_SIZE is the maximum number of runs in a run container. Normally, its
+// value would be 2048, but since our page size is 8152 bytes, we set it to a
+// lower value to avoid overflowing a single page.
+pub const RUN_MAX_SIZE: u64 = 2038;
 
 #[derive(PartialEq, Clone)]
 pub struct Container {
@@ -109,6 +117,7 @@ impl Container {
                 }
             }
             Store::Array(_) => self.store.remove_smallest(n),
+            Store::Run(_) => panic!("run not implemented"),
         };
     }
 
@@ -124,6 +133,7 @@ impl Container {
                 }
             }
             Store::Array(_) => self.store.remove_biggest(n),
+            Store::Run(_) => panic!("run not implemented"),
         };
     }
 
@@ -163,19 +173,57 @@ impl Container {
         self.store.rank(index)
     }
 
-    pub(crate) fn ensure_correct_store(&mut self) {
+    /// ensure_correct_store ensures that the state of the store is valid and
+    /// will not overflow. For example, it ensures that an array store or a run
+    /// store are not too large. It does do one optimization: it will convert a
+    /// bitmap store to an array store when possible. With that said, full
+    /// optimization should be done with the `optimize()` method.
+    ///
+    /// This method returns true if the store was changed to a different type.
+    pub(crate) fn ensure_correct_store(&mut self) -> bool {
         match &self.store {
             Store::Bitmap(ref bits) => {
                 if bits.len() <= ARRAY_LIMIT {
-                    self.store = Store::Array(bits.to_array_store())
+                    self.store = Store::Array(bits.to_array_store());
+                    return true;
                 }
             }
             Store::Array(ref vec) => {
                 if vec.len() > ARRAY_LIMIT {
-                    self.store = Store::Bitmap(vec.to_bitmap_store())
+                    self.store = Store::Bitmap(vec.to_bitmap_store());
+                    return true;
                 }
             }
-        };
+            Store::Run(ref intervals) => {
+                if intervals.len() > RUN_MAX_SIZE {
+                    self.store = Store::Bitmap(intervals.to_bitmap_store());
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// optimize is effectively a wrapper around `ensure_correct_store()`, but
+    /// in addition to ensuring that the store is valid, it will convert a store
+    /// to a RunStore when applicable. This is a separate function under the
+    /// assumption that doing the `num_runs()` call on a store for most
+    /// operations would not be very efficient. If that turns out not to be the
+    /// case, we could collapse `optimize()` into the `ensure_correct_store()`
+    /// method.
+    pub fn optimize(&mut self) -> bool {
+        match self.store {
+            Store::Array(..) | Store::Bitmap(..) => {
+                let num_runs = self.store.count_runs();
+                if num_runs <= RUN_MAX_SIZE && num_runs <= self.len() / 2 {
+                    self.store = self.store.to_run();
+                    true
+                } else {
+                    self.ensure_correct_store()
+                }
+            }
+            Store::Run(..) => self.ensure_correct_store(),
+        }
     }
 }
 
